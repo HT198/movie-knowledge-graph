@@ -5,17 +5,24 @@ import requests
 import json
 
 # ==================== 配置区域 ====================
-# Neo4j 配置
-NEO4J_URI = "neo4j+s://b865f65c.databases.neo4j.io"
-NEO4J_USERNAME = "b865f65c"
-NEO4J_PASSWORD = "bkeW9iMYQE0XYVoYBXukRlRZj4UCOprSgp-1F5fvmiM"
-NEO4J_DATABASE = "b865f65c"
+# 优先使用 st.secrets（云端），如果没有则使用硬编码（本地）
+try:
+    NEO4J_URI = st.secrets["NEO4J_URI"]
+    NEO4J_USERNAME = st.secrets["NEO4J_USERNAME"]
+    NEO4J_PASSWORD = st.secrets["NEO4J_PASSWORD"]
+    NEO4J_DATABASE = st.secrets["NEO4J_DATABASE"]
+    DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+except:
+    # 本地开发使用硬编码（修正拼写错误）
+    NEO4J_URI = "neo4j+s://b865f65c.databases.neo4j.io"
+    NEO4J_USERNAME = "b865f65c"
+    NEO4J_PASSWORD = "bkeW9iMYQE0XYVoYBXukR1RZJ4UCOprSgp-1F5fvmIM"
+    NEO4J_DATABASE = "b865f65c"
+    DEEPSEEK_API_KEY = "sk-ws-H.REEPIDY.GfI4.MQECIHQ0d0N12X0e9BoVz1iy65MgKuGkTOrpsj24j-mJrpZMAiAY9QE3wXaKNk1wHPXg3w4Kv4fCBx07cvvcW9qbt-j9z90"
 
-# 大模型 API 配置
-DEEPSEEK_API_KEY = "sk-ws-H.REEPIDY.GfI4.MEQCIH0Qd0Nl2XOe9BoVz1iy6SMgKGuKTOrpsj24j-mJrpZMAiAY9QE3wXaKNklwHPXg3w4Kv4fCBxO7cvcW9qbt-i9z9Q"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# ==================== 初始化 Neo4j 连接 ====================
+# ==================== 初始化 Neo4j ====================
 @st.cache_resource
 def init_driver():
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
@@ -30,72 +37,80 @@ except Exception as e:
     st.sidebar.error(f"❌ 数据库连接失败: {str(e)}")
     st.stop()
 
-# ==================== 10条查询语句（你提供的） ====================
+# ==================== 10条查询语句 ====================
 queries = {
     "1. 统计影片、导演、创作关系总数量": """
-MATCH (m:Movie),(d:Director),(d)-[r:CREATE]->(m)
-RETURN count(DISTINCT m) AS 影片总量,count(DISTINCT d) AS 导演总量,count(DISTINCT r) AS 创作关系总量
+MATCH (m:Movie)
+WITH count(m) AS movie_count
+MATCH ()-[r:CREATE]->()
+WITH movie_count, count(DISTINCT r.director_name) AS director_count, count(r) AS relation_count
+RETURN movie_count AS 影片总量, director_count AS 导演总量, relation_count AS 创作关系总量
 """,
     "2. 查询全部导演名单（去重排序）": """
-MATCH (d:Director)
-RETURN DISTINCT d.director_name AS 导演姓名
+MATCH ()-[r:CREATE]->()
+RETURN DISTINCT r.director_name AS 导演姓名
 ORDER BY 导演姓名
 """,
     "3. 查询James Cameron所有影片及评分、年份": """
-MATCH (d:Director{director_name:"James Cameron"})-[:CREATE]->(m:Movie)
-RETURN m.name AS 影片名,m.year AS 上映年份,m.rating AS 评分
+MATCH ()-[r:CREATE {director_name: "James Cameron"}]->(m:Movie)
+RETURN m.name AS 影片名, m.year AS 上映年份, m.rating AS 评分
 ORDER BY m.rating DESC
 """,
     "4. 统计每位导演执导影片数量": """
-MATCH (d:Director)-[:CREATE]->(m:Movie)
-RETURN d.director_name AS 导演,count(m) AS 执导影片数
-ORDER BY count(m) DESC
+MATCH ()-[r:CREATE]->(m:Movie)
+RETURN r.director_name AS 导演, count(m) AS 执导影片数
+ORDER BY 执导影片数 DESC
 """,
     "5. 查询评分大于9分的高分影片及对应导演": """
-MATCH (d:Director)-[:CREATE]->(m:Movie)
+MATCH ()-[r:CREATE]->(m:Movie)
 WHERE m.rating > 9
-RETURN m.name AS 高分影片,m.rating AS 评分,d.director_name AS 导演
+RETURN m.name AS 高分影片, m.rating AS 评分, r.director_name AS 导演
 ORDER BY m.rating DESC
 """,
     "6. 查询2020年及之后上映的全部电影": """
-MATCH (d:Director)-[:CREATE]->(m:Movie)
+MATCH ()-[r:CREATE]->(m:Movie)
 WHERE m.year >= 2020
-RETURN m.name,m.year,m.rating,d.director_name
+RETURN m.name AS 电影名, m.year AS 年份, m.rating AS 评分, r.director_name AS 导演
 ORDER BY m.year DESC
 """,
     "7. 查询6~8分中等评分影片（限制20条）": """
 MATCH (m:Movie)
-WHERE m.rating >=6 AND m.rating <=8
-RETURN m.name,m.rating,m.year LIMIT 20
+WHERE m.rating >= 6 AND m.rating <= 8
+RETURN m.name AS 电影名, m.rating AS 评分, m.year AS 年份
+ORDER BY m.rating DESC
+LIMIT 20
 """,
     "8. 评分最高的前10部电影": """
-MATCH (d:Director)-[:CREATE]->(m:Movie)
-RETURN m.name,m.rating,d.director_name
-ORDER BY m.rating DESC LIMIT 10
+MATCH ()-[r:CREATE]->(m:Movie)
+RETURN m.name AS 电影名, m.rating AS 评分, r.director_name AS 导演
+ORDER BY m.rating DESC
+LIMIT 10
 """,
     "9. 按年份统计每年上映影片总数": """
 MATCH (m:Movie)
-RETURN m.year AS 年份,count(m) AS 影片数量
-ORDER BY m.year
+WHERE m.year IS NOT NULL
+RETURN m.year AS 年份, count(m) AS 影片数量
+ORDER BY 年份
 """,
     "10. 2010年后高分且执导≥3部影片的导演": """
-MATCH (d:Director)-[:CREATE]->(m:Movie)
-WHERE m.year>2010 AND m.rating>8.5
-WITH d, collect(m) AS movie_list WHERE size(movie_list)>=3
+MATCH ()-[r:CREATE]->(m:Movie)
+WHERE m.year > 2010 AND m.rating > 8.5
+WITH r.director_name AS 导演, collect(m) AS movie_list
+WHERE size(movie_list) >= 3
 UNWIND movie_list AS single_movie
-RETURN d.director_name AS 导演, single_movie.name AS 影片名称
-ORDER BY d.director_name
+RETURN 导演, single_movie.name AS 影片名称
+ORDER BY 导演
 """
 }
 
-# ==================== 大模型问答功能 ====================
+# ==================== 大模型问答 ====================
 def natural_language_to_cypher(question):
-    system_prompt = """你是一个Neo4j Cypher查询生成专家。数据库中有两种节点：
-- Movie: 电影，属性有 name(片名), year(年份), rating(评分)
-- Director: 导演，属性有 director_name(导演姓名)
-关系: (Director)-[:CREATE]->(Movie)
+    system_prompt = """你是一个Neo4j Cypher查询生成专家。数据库结构如下：
+- 节点类型: Movie (属性: name, year, rating)
+- 关系类型: CREATE (属性: director_name，表示导演名字)
+- 关系方向: ()-[r:CREATE]->(m:Movie)
 
-请将用户的问题转换为Cypher查询语句，只返回Cypher代码，不要有其他解释。"""
+请将用户问题转换为Cypher查询，只返回Cypher代码。"""
     
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -145,10 +160,6 @@ if st.sidebar.button("▶️ 执行查询", type="primary", use_container_width=
             df = pd.DataFrame(records)
             st.success(f"✅ 查询成功，返回 {len(records)} 条记录")
             st.dataframe(df, use_container_width=True)
-            
-            # 如果查询结果包含年份和数量，显示图表
-            if "年份" in df.columns and "影片数量" in df.columns:
-                st.bar_chart(df.set_index("年份"))
         else:
             st.info("ℹ️ 查询无返回数据")
     except Exception as e:
@@ -156,8 +167,8 @@ if st.sidebar.button("▶️ 执行查询", type="primary", use_container_width=
 
 st.sidebar.markdown("---")
 
-# 自然语言问答
-st.sidebar.header("🤖 智能问答（加分项）")
+# 智能问答
+st.sidebar.header("🤖 智能问答")
 user_question = st.sidebar.text_input("💬 输入你的问题", placeholder="例如：James Cameron导演过哪些电影？")
 if st.sidebar.button("✨ 智能查询", type="secondary", use_container_width=True):
     if user_question:
@@ -182,35 +193,45 @@ if st.sidebar.button("✨ 智能查询", type="secondary", use_container_width=T
     else:
         st.sidebar.warning("请输入问题")
 
-# 主区域：全局实体检索
+# 全局检索
 st.subheader("🔍 全局实体模糊检索（影片/导演）")
-keyword = st.text_input("输入名称关键字检索：", placeholder="例如：Cameron、阿凡达")
 
-if keyword:
-    # 使用参数化查询防止注入
-    search_cypher = """
-    MATCH (n)
-    WHERE (n.name IS NOT NULL AND n.name CONTAINS $keyword) 
-       OR (n.director_name IS NOT NULL AND n.director_name CONTAINS $keyword)
-    RETURN labels(n)[0] AS 实体类型, coalesce(n.name, n.director_name) AS 实体名称
-    LIMIT 50
-    """
-    try:
-        with driver.session(database=NEO4J_DATABASE) as sess:
-            result = sess.run(search_cypher, keyword=keyword)
-            data = [row.data() for row in result]
-        if data:
-            st.dataframe(pd.DataFrame(data), use_container_width=True)
-        else:
-            st.info(f"未找到包含 '{keyword}' 的实体")
-    except Exception as err:
-        st.error(f"检索异常：{err}")
+col1, col2 = st.columns(2)
 
-# 自定义Cypher执行区
+with col1:
+    movie_keyword = st.text_input("搜索电影", placeholder="输入电影名称...")
+    if movie_keyword:
+        cypher = f"MATCH (m:Movie) WHERE m.name CONTAINS '{movie_keyword}' RETURN m.name AS 电影名, m.year AS 年份, m.rating AS 评分 LIMIT 20"
+        try:
+            with driver.session(database=NEO4J_DATABASE) as session:
+                result = session.run(cypher)
+                records = [record.data() for record in result]
+            if records:
+                st.dataframe(pd.DataFrame(records), use_container_width=True)
+            else:
+                st.info(f"未找到包含 '{movie_keyword}' 的电影")
+        except Exception as e:
+            st.error(f"查询失败: {e}")
+
+with col2:
+    director_keyword = st.text_input("搜索导演", placeholder="输入导演名称...")
+    if director_keyword:
+        cypher = f"MATCH ()-[r:CREATE]->() WHERE r.director_name CONTAINS '{director_keyword}' RETURN DISTINCT r.director_name AS 导演名 LIMIT 20"
+        try:
+            with driver.session(database=NEO4J_DATABASE) as session:
+                result = session.run(cypher)
+                records = [record.data() for record in result]
+            if records:
+                st.dataframe(pd.DataFrame(records), use_container_width=True)
+            else:
+                st.info(f"未找到包含 '{director_keyword}' 的导演")
+        except Exception as e:
+            st.error(f"查询失败: {e}")
+
+# 自定义Cypher
 st.markdown("---")
 st.subheader("📝 自定义Cypher语句执行")
-user_cypher = st.text_area("在此输入Cypher查询代码：", height=120, 
-                           placeholder="示例: MATCH (m:Movie) RETURN m.name, m.rating LIMIT 5")
+user_cypher = st.text_area("在此输入Cypher查询代码：", height=120)
 if st.button("执行自定义语句", type="primary"):
     if user_cypher.strip():
         try:
@@ -227,12 +248,5 @@ if st.button("执行自定义语句", type="primary"):
     else:
         st.warning("请输入Cypher语句")
 
-# 页脚
 st.markdown("---")
-st.info("""
-📌 **系统说明**：
-- 左侧为10个预设Cypher查询（使用 :CREATE 关系）
-- 智能问答使用DeepSeek API将自然语言转换为Cypher
-- 支持全局模糊检索（影片/导演名称）
-- 数据存储于Neo4j Aura云端
-""")
+st.info("📌 基于 Neo4j Aura + DeepSeek API 的影视知识图谱查询系统")
