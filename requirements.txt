@@ -1,0 +1,8 @@
+streamlit==1.38.0
+neo4j-python-driver==5.11.0
+pandas==2.0.3
+langchain==0.2.10
+langchain-community==0.2.10
+langchain-openai==0.1.17
+python-dotenv==1.0.0
+openai
