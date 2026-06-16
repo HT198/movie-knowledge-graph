@@ -260,4 +260,4 @@ if st.button("执行自定义语句", type="primary"):
         st.warning("请输入Cypher语句")
 
 st.markdown("---")
-st.info("📌 基于 Neo4j Aura + DeepSeek API 的影视知识图谱查询系统")v
+st.info("📌 基于 Neo4j Aura + DeepSeek API 的影视知识图谱查询系统")
